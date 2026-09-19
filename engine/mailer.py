@@ -272,8 +272,9 @@ class CampaignWorker:
                 channel_name
             )
 
-            # Send email
-            success, err_msg = send_single_email(
+            # Send email in a background thread so asyncio event loop remains non-blocking
+            success, err_msg = await asyncio.to_thread(
+                send_single_email,
                 account["email"],
                 account["app_password"],
                 recipient_email,
