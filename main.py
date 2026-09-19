@@ -11,7 +11,7 @@ from bot.handlers import register_handlers, set_db_manager
 from telegram import Update
 from telegram.ext import Application
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8460543006:AAHHk3gQ7flCjHAvoBxmyXMwCYD4yeFC-ak")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8460543006:AAGk6fszUO7NfP6WtblGsD5ecWVkEq3aWxQ")
 BOT_STATUS = {"status": "starting", "errors": 0}
 
 
