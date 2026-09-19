@@ -7,7 +7,7 @@ from database.seed import seed_initial_data
 from bot.handlers import register_handlers, set_db_manager
 from telegram.ext import Application
 
-BOT_TOKEN = "8460543006:AAGKnlnbTPSkg7vGntQISVuL5vomjiNeiBk"
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8460543006:AAGKnlnbTPSkg7vGntQISVuL5vomjiNeiBk")
 
 
 class HealthCheckHandler(BaseHTTPRequestHandler):
