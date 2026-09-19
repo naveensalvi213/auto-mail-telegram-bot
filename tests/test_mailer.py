@@ -90,7 +90,7 @@ def test_send_single_email_ssl_success(mock_smtp_ssl):
 
     assert success is True
     assert msg == "OK"
-    mock_smtp_ssl.assert_called_once_with("smtp.gmail.com", 465, timeout=15)
+    mock_smtp_ssl.assert_called_once_with("smtp.gmail.com", 465, timeout=10)
     mock_server.login.assert_called_once_with("sender@gmail.com", "pass")
     mock_server.sendmail.assert_called_once()
     mock_server.quit.assert_called_once()
@@ -114,7 +114,7 @@ def test_send_single_email_ssl_fail_starttls_success(mock_smtp_ssl, mock_smtp):
 
     assert success is True
     assert msg == "OK"
-    mock_smtp.assert_called_once_with("smtp.gmail.com", 587, timeout=15)
+    mock_smtp.assert_called_once_with("smtp.gmail.com", 587, timeout=10)
     mock_server_tls.starttls.assert_called_once()
     mock_server_tls.login.assert_called_once_with("sender@gmail.com", "pass")
     mock_server_tls.sendmail.assert_called_once()

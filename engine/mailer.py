@@ -128,16 +128,26 @@ def send_single_email(
 ) -> Tuple[bool, str]:
     """
     Creates proper MIMEText email.
-    Connects to smtp.gmail.com over IPv4 (socket.AF_INET) on port 465 (SMTP_SSL) with fallback to 587 (STARTTLS).
-    If standard SMTP fails due to cloud network firewall blocks (e.g. [Errno 101] Network is unreachable on Render),
-    falls back to sending via HTTP/HTTPS relay on port 443.
+    If HTTP Relay, RESEND_API_KEY, or SENDGRID_API_KEY is configured, sends via HTTP/HTTPS on port 443 first
+    to eliminate outbound SMTP firewall timeouts (30s socket hangs on cloud hosts like Render).
+    Falls back to standard IPv4 SMTP_SSL/STARTTLS for local or unrestricted environments.
     """
+    import os
+
+    # 1. Try HTTP/HTTPS Relay first if API keys or relay URLs are present
+    if http_relay_url or os.environ.get("HTTP_SMTP_RELAY_URL") or os.environ.get("RESEND_API_KEY") or os.environ.get("SENDGRID_API_KEY"):
+        http_success, http_msg = send_http_relay_email(
+            sender_email, app_password, recipient_email, subject, body, http_relay_url
+        )
+        if http_success:
+            return True, http_msg
+
+    # 2. Standard SMTP (for local execution or unrestricted environments)
     msg = MIMEText(body, "plain", "utf-8")
     msg["From"] = sender_email
     msg["To"] = recipient_email
     msg["Subject"] = subject
 
-    # Monkey patch socket.getaddrinfo temporarily to force IPv4 (AF_INET) for SMTP socket resolution
     orig_getaddrinfo = socket.getaddrinfo
 
     def ipv4_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
@@ -147,18 +157,16 @@ def send_single_email(
     smtp_errors = []
 
     try:
-        # Try IPv4 SMTP_SSL on port 465 first
         try:
-            server = smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15)
+            server = smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10)
             server.login(sender_email, app_password)
             server.sendmail(sender_email, [recipient_email], msg.as_string())
             server.quit()
             return True, "OK"
         except Exception as e_ssl:
             smtp_errors.append(f"SSL: {e_ssl}")
-            # Fallback to IPv4 STARTTLS on port 587
             try:
-                server = smtplib.SMTP("smtp.gmail.com", 587, timeout=15)
+                server = smtplib.SMTP("smtp.gmail.com", 587, timeout=10)
                 server.starttls()
                 server.login(sender_email, app_password)
                 server.sendmail(sender_email, [recipient_email], msg.as_string())
@@ -167,10 +175,9 @@ def send_single_email(
             except Exception as e_tls:
                 smtp_errors.append(f"TLS: {e_tls}")
     finally:
-        # Always restore original getaddrinfo
         socket.getaddrinfo = orig_getaddrinfo
 
-    # If standard SMTP calls failed (e.g. [Errno 101] Network unreachable on Render), try HTTP relay fallback over port 443
+    # 3. Final fallback attempt to HTTP relay
     http_success, http_msg = send_http_relay_email(
         sender_email, app_password, recipient_email, subject, body, http_relay_url
     )
@@ -178,7 +185,7 @@ def send_single_email(
         return True, http_msg
 
     combined_err = " | ".join(smtp_errors)
-    return False, f"SMTP failed ({combined_err}). HTTP Relay fallback: {http_msg}"
+    return False, f"SMTP failed ({combined_err}). HTTP Relay: {http_msg}"
 
 
 class CampaignWorker:
