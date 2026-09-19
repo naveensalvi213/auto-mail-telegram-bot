@@ -75,10 +75,10 @@ def test_select_random_account_empty():
 # ---------------------------------------------------------------------------
 # 3. Tests for send_single_email
 # ---------------------------------------------------------------------------
-@patch("engine.mailer.connect_smtp_ipv4")
-def test_send_single_email_ssl_success(mock_connect):
+@patch("smtplib.SMTP_SSL")
+def test_send_single_email_ssl_success(mock_smtp_ssl):
     mock_server = MagicMock()
-    mock_connect.return_value = mock_server
+    mock_smtp_ssl.return_value = mock_server
 
     success, msg = send_single_email(
         sender_email="sender@gmail.com",
@@ -90,17 +90,19 @@ def test_send_single_email_ssl_success(mock_connect):
 
     assert success is True
     assert msg == "OK"
-    mock_connect.assert_called_once_with("smtp.gmail.com", 465, use_ssl=True, timeout=15.0)
+    mock_smtp_ssl.assert_called_once_with("smtp.gmail.com", 465, timeout=15)
     mock_server.login.assert_called_once_with("sender@gmail.com", "pass")
     mock_server.sendmail.assert_called_once()
     mock_server.quit.assert_called_once()
 
 
+@patch("smtplib.SMTP")
 @patch("smtplib.SMTP_SSL")
-@patch("engine.mailer.connect_smtp_ipv4")
-def test_send_single_email_ssl_fail_starttls_success(mock_connect, mock_smtp_ssl):
+def test_send_single_email_ssl_fail_starttls_success(mock_smtp_ssl, mock_smtp):
+    mock_smtp_ssl.side_effect = Exception("SSL port 465 connection failed")
+
     mock_server_tls = MagicMock()
-    mock_connect.side_effect = [Exception("SSL port 465 connection failed"), mock_server_tls]
+    mock_smtp.return_value = mock_server_tls
 
     success, msg = send_single_email(
         sender_email="sender@gmail.com",
@@ -112,17 +114,18 @@ def test_send_single_email_ssl_fail_starttls_success(mock_connect, mock_smtp_ssl
 
     assert success is True
     assert msg == "OK"
+    mock_smtp.assert_called_once_with("smtp.gmail.com", 587, timeout=15)
     mock_server_tls.starttls.assert_called_once()
     mock_server_tls.login.assert_called_once_with("sender@gmail.com", "pass")
     mock_server_tls.sendmail.assert_called_once()
     mock_server_tls.quit.assert_called_once()
 
 
+@patch("smtplib.SMTP")
 @patch("smtplib.SMTP_SSL")
-@patch("engine.mailer.connect_smtp_ipv4")
-def test_send_single_email_all_fail(mock_connect, mock_smtp_ssl):
-    mock_connect.side_effect = Exception("SSL Failed")
-    mock_smtp_ssl.side_effect = Exception("Fallback Failed")
+def test_send_single_email_all_fail(mock_smtp_ssl, mock_smtp):
+    mock_smtp_ssl.side_effect = Exception("SSL Failed")
+    mock_smtp.side_effect = Exception("TLS Failed")
 
     success, msg = send_single_email(
         sender_email="sender@gmail.com",
@@ -133,7 +136,7 @@ def test_send_single_email_all_fail(mock_connect, mock_smtp_ssl):
     )
 
     assert success is False
-    assert "Failed" in msg
+    assert "TLS Failed" in msg
 
 
 # ---------------------------------------------------------------------------
