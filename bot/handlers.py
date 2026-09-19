@@ -141,11 +141,14 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await update.message.reply_text("⚠️ No valid leads extracted from the file. Please check file contents and try again.")
         return
 
-    # Store leads and file info in chat_data session
+    chat_id = str(update.effective_chat.id)
+    db_mgr = get_db_manager(context)
+
+    # Store leads in SQLite database permanently + in-memory session fallback
+    db_mgr.save_temp_leads(chat_id, leads)
     context.chat_data["pending_leads"] = leads
     context.chat_data["lead_filename"] = doc.file_name
 
-    db_mgr = get_db_manager(context)
     all_mail_sets = db_mgr.get_all_mail_sets()
 
     keyboard = []
@@ -169,6 +172,7 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     data = query.data or ""
     db_mgr = get_db_manager(context)
+    chat_id = str(update.effective_chat.id) if update.effective_chat else ""
 
     if data.startswith("mail_set:"):
         await query.answer()
@@ -179,10 +183,10 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
         keyboard = []
         if all_template_sets:
             for t_set in all_template_sets.keys():
-                keyboard.append([InlineKeyboardButton(f"[ {t_set} ]", callback_data=f"template_set:{t_set}")])
+                keyboard.append([InlineKeyboardButton(f"[ {t_set} ]", callback_data=f"template_set:{mail_set_name}:{t_set}")])
         else:
-            keyboard.append([InlineKeyboardButton("[ Template Set 1 ]", callback_data="template_set:Template Set 1")])
-            keyboard.append([InlineKeyboardButton("[ Template Set 2 ]", callback_data="template_set:Template Set 2")])
+            keyboard.append([InlineKeyboardButton("[ Template Set 1 ]", callback_data=f"template_set:{mail_set_name}:Template Set 1")])
+            keyboard.append([InlineKeyboardButton("[ Template Set 2 ]", callback_data=f"template_set:{mail_set_name}:Template Set 2")])
 
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text(
@@ -193,13 +197,20 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     elif data.startswith("template_set:"):
         await query.answer()
-        template_set_name = data.split("template_set:", 1)[1]
+        parts = data.split(":", 2)
+        if len(parts) >= 3:
+            mail_set_name = parts[1]
+            template_set_name = parts[2]
+        else:
+            mail_set_name = context.chat_data.get("selected_mail_set", "Mail Set 1")
+            template_set_name = parts[1] if len(parts) > 1 else "Template Set 1"
+
+        context.chat_data["selected_mail_set"] = mail_set_name
         context.chat_data["selected_template_set"] = template_set_name
 
-        mail_set_name = context.chat_data.get("selected_mail_set", "N/A")
-        leads = context.chat_data.get("pending_leads", [])
+        leads = context.chat_data.get("pending_leads") or db_mgr.get_temp_leads(chat_id)
 
-        keyboard = [[InlineKeyboardButton("[ 🚀 Start Campaign ]", callback_data="start_campaign")]]
+        keyboard = [[InlineKeyboardButton("[ 🚀 Start Campaign ]", callback_data=f"start_campaign:{mail_set_name}:{template_set_name}")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await query.edit_message_text(
@@ -211,14 +222,21 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
             parse_mode="Markdown"
         )
 
-    elif data == "start_campaign":
+    elif data.startswith("start_campaign"):
         await query.answer()
-        leads = context.chat_data.get("pending_leads")
-        mail_set_name = context.chat_data.get("selected_mail_set")
-        template_set_name = context.chat_data.get("selected_template_set")
+        parts = data.split(":")
+        if len(parts) >= 3:
+            mail_set_name = parts[1]
+            template_set_name = parts[2]
+        else:
+            mail_set_name = context.chat_data.get("selected_mail_set", "Mail Set 1")
+            template_set_name = context.chat_data.get("selected_template_set", "Template Set 1")
 
-        if not leads or not mail_set_name or not template_set_name:
-            await query.edit_message_text("⚠️ Session expired or missing selection data. Please upload the lead file again.")
+        # Fetch leads from memory or persistent SQLite database
+        leads = context.chat_data.get("pending_leads") or db_mgr.get_temp_leads(chat_id)
+
+        if not leads:
+            await query.edit_message_text("⚠️ No lead file found for this chat. Please upload your lead file again.")
             return
 
         chat_id = str(update.effective_chat.id)

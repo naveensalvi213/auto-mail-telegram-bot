@@ -70,8 +70,46 @@ class DatabaseManager:
             );
         """)
 
+        # Table: temp_leads (persistent session storage across restarts)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS temp_leads (
+                chat_id TEXT PRIMARY KEY,
+                leads_json TEXT NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
         conn.commit()
         conn.close()
+
+    def save_temp_leads(self, chat_id: str, leads: List[Dict[str, Any]]) -> None:
+        """Persists uploaded leads in database to prevent session expiration across restarts."""
+        import json
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        leads_str = json.dumps(leads)
+        cursor.execute(
+            """INSERT INTO temp_leads (chat_id, leads_json) VALUES (?, ?)
+               ON CONFLICT(chat_id) DO UPDATE SET leads_json = excluded.leads_json, updated_at = CURRENT_TIMESTAMP;""",
+            (str(chat_id), leads_str)
+        )
+        conn.commit()
+        conn.close()
+
+    def get_temp_leads(self, chat_id: str) -> List[Dict[str, Any]]:
+        """Retrieves stored leads for a given chat_id."""
+        import json
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT leads_json FROM temp_leads WHERE chat_id = ?;", (str(chat_id),))
+        row = cursor.fetchone()
+        conn.close()
+        if row and row["leads_json"]:
+            try:
+                return json.loads(row["leads_json"])
+            except Exception:
+                return []
+        return []
 
     def add_mail_account(self, set_name: str, email: str, app_password: str) -> None:
         """Add a mail sender account to a specific mail set."""
