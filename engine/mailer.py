@@ -30,6 +30,46 @@ def select_random_account(accounts: List[Dict[str, Any]]) -> Dict[str, Any]:
     return random.choice(accounts)
 
 
+import socket
+import ssl
+
+def connect_smtp_ipv4(host: str, port: int, use_ssl: bool = True, timeout: float = 15.0) -> Tuple[smtplib.SMTP, Any]:
+    """
+    Establishes an IPv4-only (socket.AF_INET) SMTP connection.
+    Prevents [Errno 101] Network is unreachable caused by IPv6 resolution on cloud hosts like Render.
+    """
+    addrs = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+    if not addrs:
+        raise OSError(f"Could not resolve IPv4 address for {host}")
+
+    last_error = None
+    for family, socktype, proto, canonname, sockaddr in addrs:
+        try:
+            sock = socket.socket(family, socktype, proto)
+            sock.settimeout(timeout)
+            sock.connect(sockaddr)
+            if use_ssl:
+                ctx = ssl.create_default_context()
+                ssl_sock = ctx.wrap_socket(sock, server_hostname=host)
+                server = smtplib.SMTP_SSL(host=host, port=port)
+                server.sock = ssl_sock
+                return server
+            else:
+                server = smtplib.SMTP(host=host, port=port)
+                server.sock = sock
+                return server
+        except Exception as e:
+            last_error = e
+            try:
+                sock.close()
+            except Exception:
+                pass
+
+    if last_error:
+        raise last_error
+    raise OSError(f"Failed to connect to {host}:{port}")
+
+
 def send_single_email(
     sender_email: str,
     app_password: str,
@@ -39,7 +79,7 @@ def send_single_email(
 ) -> Tuple[bool, str]:
     """
     Creates proper MIMEText email.
-    Connects to smtp.gmail.com on port 465 (SMTP_SSL) with fallback to 587 (STARTTLS).
+    Connects to smtp.gmail.com over IPv4 on port 465 (SMTP_SSL) with fallback to 587 (STARTTLS).
     Authenticates using sender_email and app_password.
     Sends email to recipient_email and closes connection cleanly.
     Catches exceptions and returns (True, "OK") or (False, str(e)).
@@ -49,9 +89,9 @@ def send_single_email(
     msg["To"] = recipient_email
     msg["Subject"] = subject
 
-    # Try SMTP_SSL on port 465 first
+    # Try IPv4 SMTP_SSL on port 465 first
     try:
-        server = smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15)
+        server = connect_smtp_ipv4("smtp.gmail.com", 465, use_ssl=True, timeout=15.0)
         try:
             server.login(sender_email, app_password)
             server.sendmail(sender_email, [recipient_email], msg.as_string())
@@ -63,10 +103,10 @@ def send_single_email(
             except Exception:
                 pass
             raise e_ssl_inner
-    except Exception:
-        # Fallback to STARTTLS on port 587
+    except Exception as e_ssl:
+        # Fallback to standard SMTP / STARTTLS on port 587 (IPv4 forced)
         try:
-            server = smtplib.SMTP("smtp.gmail.com", 587, timeout=15)
+            server = connect_smtp_ipv4("smtp.gmail.com", 587, use_ssl=False, timeout=15.0)
             try:
                 server.starttls()
                 server.login(sender_email, app_password)
@@ -79,8 +119,16 @@ def send_single_email(
                 except Exception:
                     pass
                 return False, str(e_tls_inner)
-        except Exception as e_fallback:
-            return False, str(e_fallback)
+        except Exception:
+            # Fallback to standard smtplib if custom IPv4 socket binding fails
+            try:
+                server = smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15)
+                server.login(sender_email, app_password)
+                server.sendmail(sender_email, [recipient_email], msg.as_string())
+                server.quit()
+                return True, "OK"
+            except Exception as e_final:
+                return False, str(e_final)
 
 
 class CampaignWorker:
