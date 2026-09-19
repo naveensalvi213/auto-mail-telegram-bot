@@ -139,6 +139,95 @@ def test_send_single_email_all_fail(mock_smtp_ssl, mock_smtp):
     assert "TLS Failed" in msg
 
 
+@patch("requests.post")
+def test_send_http_relay_url_success(mock_post):
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_post.return_value = mock_resp
+
+    from engine.mailer import send_http_relay_email
+    success, msg = send_http_relay_email(
+        sender_email="sender@gmail.com",
+        app_password="pass",
+        recipient_email="recipient@gmail.com",
+        subject="Test Subject",
+        body="Test Body",
+        relay_url="https://relay.test.com/send"
+    )
+
+    assert success is True
+    assert "OK (HTTP Relay)" in msg
+    mock_post.assert_called_once()
+
+
+@patch.dict("os.environ", {"RESEND_API_KEY": "re_test_key"})
+@patch("requests.post")
+def test_send_http_relay_resend_success(mock_post):
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_post.return_value = mock_resp
+
+    from engine.mailer import send_http_relay_email
+    success, msg = send_http_relay_email(
+        sender_email="sender@gmail.com",
+        app_password="pass",
+        recipient_email="recipient@gmail.com",
+        subject="Test Subject",
+        body="Test Body"
+    )
+
+    assert success is True
+    assert "OK (Resend API)" in msg
+    mock_post.assert_called_once()
+
+
+@patch.dict("os.environ", {"SENDGRID_API_KEY": "SG.test_key"})
+@patch("requests.post")
+def test_send_http_relay_sendgrid_success(mock_post):
+    mock_resp = MagicMock()
+    mock_resp.status_code = 202
+    mock_post.return_value = mock_resp
+
+    from engine.mailer import send_http_relay_email
+    success, msg = send_http_relay_email(
+        sender_email="sender@gmail.com",
+        app_password="pass",
+        recipient_email="recipient@gmail.com",
+        subject="Test Subject",
+        body="Test Body"
+    )
+
+    assert success is True
+    assert "OK (SendGrid API)" in msg
+    mock_post.assert_called_once()
+
+
+@patch("smtplib.SMTP")
+@patch("smtplib.SMTP_SSL")
+@patch("requests.post")
+def test_send_single_email_errno_101_fallback(mock_post, mock_smtp_ssl, mock_smtp):
+    mock_smtp_ssl.side_effect = OSError(101, "Network is unreachable")
+    mock_smtp.side_effect = OSError(101, "Network is unreachable")
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_post.return_value = mock_resp
+
+    success, msg = send_single_email(
+        sender_email="sender@gmail.com",
+        app_password="pass",
+        recipient_email="recipient@gmail.com",
+        subject="Test Subject",
+        body="Test Body",
+        http_relay_url="https://relay.test.com/send"
+    )
+
+    assert success is True
+    assert "OK (HTTP Relay)" in msg
+    mock_post.assert_called_once()
+
+
+
 # ---------------------------------------------------------------------------
 # 4. Tests for CampaignWorker
 # ---------------------------------------------------------------------------

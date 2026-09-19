@@ -31,19 +31,104 @@ def select_random_account(accounts: List[Dict[str, Any]]) -> Dict[str, Any]:
     return random.choice(accounts)
 
 
+def send_http_relay_email(
+    sender_email: str,
+    app_password: str,
+    recipient_email: str,
+    subject: str,
+    body: str,
+    relay_url: Optional[str] = None
+) -> Tuple[bool, str]:
+    """
+    Sends email via HTTP POST over port 443 (HTTPS) to bypass outbound SMTP firewall blocks (Errno 101 on Render).
+    Supports HTTP_SMTP_RELAY_URL, RESEND_API_KEY, or SENDGRID_API_KEY.
+    """
+    import os
+    import requests
+
+    target_url = relay_url or os.environ.get("HTTP_SMTP_RELAY_URL") or os.environ.get("HTTP_MAIL_RELAY_URL")
+    resend_key = os.environ.get("RESEND_API_KEY")
+    sendgrid_key = os.environ.get("SENDGRID_API_KEY")
+
+    if target_url:
+        try:
+            payload = {
+                "sender": sender_email,
+                "app_password": app_password,
+                "recipient": recipient_email,
+                "subject": subject,
+                "body": body
+            }
+            resp = requests.post(target_url, json=payload, timeout=15)
+            if resp.status_code in (200, 201, 202):
+                return True, "OK (HTTP Relay)"
+            else:
+                return False, f"HTTP Relay failed ({resp.status_code}): {resp.text}"
+        except Exception as e:
+            return False, f"HTTP Relay error: {e}"
+
+    elif resend_key:
+        try:
+            resp = requests.post(
+                "https://api.resend.com/emails",
+                headers={
+                    "Authorization": f"Bearer {resend_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "from": sender_email,
+                    "to": [recipient_email],
+                    "subject": subject,
+                    "text": body
+                },
+                timeout=15
+            )
+            if resp.status_code in (200, 201, 202):
+                return True, "OK (Resend API)"
+            else:
+                return False, f"Resend API failed ({resp.status_code}): {resp.text}"
+        except Exception as e:
+            return False, f"Resend API error: {e}"
+
+    elif sendgrid_key:
+        try:
+            resp = requests.post(
+                "https://api.sendgrid.com/v3/mail/send",
+                headers={
+                    "Authorization": f"Bearer {sendgrid_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "personalizations": [{"to": [{"email": recipient_email}]}],
+                    "from": {"email": sender_email},
+                    "subject": subject,
+                    "content": [{"type": "text/plain", "value": body}]
+                },
+                timeout=15
+            )
+            if resp.status_code in (200, 201, 202):
+                return True, "OK (SendGrid API)"
+            else:
+                return False, f"SendGrid API failed ({resp.status_code}): {resp.text}"
+        except Exception as e:
+            return False, f"SendGrid API error: {e}"
+
+    return False, "No HTTP relay URL or API key configured (set HTTP_SMTP_RELAY_URL, RESEND_API_KEY, or SENDGRID_API_KEY)."
+
+
 def send_single_email(
     sender_email: str,
     app_password: str,
     recipient_email: str,
     subject: str,
-    body: str
+    body: str,
+    http_relay_url: Optional[str] = None
 ) -> Tuple[bool, str]:
     """
     Creates proper MIMEText email.
     Connects to smtp.gmail.com over IPv4 (socket.AF_INET) on port 465 (SMTP_SSL) with fallback to 587 (STARTTLS).
-    Bypasses [Errno 101] Network is unreachable on cloud hosts like Render by forcing IPv4 DNS resolution.
-    Authenticates using sender_email and app_password.
-    Sends email to recipient_email and closes connection cleanly.
+    If standard SMTP fails due to cloud network firewall blocks (e.g. [Errno 101] Network is unreachable on Render),
+    falls back to sending via HTTP/HTTPS relay on port 443.
     """
     msg = MIMEText(body, "plain", "utf-8")
     msg["From"] = sender_email
@@ -57,6 +142,7 @@ def send_single_email(
         return orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
 
     socket.getaddrinfo = ipv4_getaddrinfo
+    smtp_errors = []
 
     try:
         # Try IPv4 SMTP_SSL on port 465 first
@@ -67,6 +153,7 @@ def send_single_email(
             server.quit()
             return True, "OK"
         except Exception as e_ssl:
+            smtp_errors.append(f"SSL: {e_ssl}")
             # Fallback to IPv4 STARTTLS on port 587
             try:
                 server = smtplib.SMTP("smtp.gmail.com", 587, timeout=15)
@@ -76,10 +163,20 @@ def send_single_email(
                 server.quit()
                 return True, "OK"
             except Exception as e_tls:
-                return False, str(e_tls)
+                smtp_errors.append(f"TLS: {e_tls}")
     finally:
         # Always restore original getaddrinfo
         socket.getaddrinfo = orig_getaddrinfo
+
+    # If standard SMTP calls failed (e.g. [Errno 101] Network unreachable on Render), try HTTP relay fallback over port 443
+    http_success, http_msg = send_http_relay_email(
+        sender_email, app_password, recipient_email, subject, body, http_relay_url
+    )
+    if http_success:
+        return True, http_msg
+
+    combined_err = " | ".join(smtp_errors)
+    return False, f"SMTP failed ({combined_err}). HTTP Relay fallback: {http_msg}"
 
 
 class CampaignWorker:
