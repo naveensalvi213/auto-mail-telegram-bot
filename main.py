@@ -39,9 +39,27 @@ def start_health_check_server():
         logging.getLogger(__name__).warning(f"Could not start health check HTTP server: {e}")
 
 
+async def keep_alive_ping():
+    """Pings local health check server every 3 minutes to keep Render Web Service active 24/7."""
+    logger = logging.getLogger(__name__)
+    port = int(os.environ.get("PORT", 10000))
+    url = f"http://127.0.0.1:{port}/"
+    while True:
+        await asyncio.sleep(180)  # Every 3 minutes
+        try:
+            import urllib.request
+            urllib.request.urlopen(url, timeout=5)
+            logger.debug("Keep-alive self-ping successful.")
+        except Exception as e:
+            logger.debug(f"Keep-alive self-ping failed: {e}")
+
+
 async def run_bot_polling():
     """Resilient async polling loop with automatic error recovery and reconnection."""
     logger = logging.getLogger(__name__)
+
+    # Start self-pinging keep-alive task to prevent Render free service sleep
+    asyncio.create_task(keep_alive_ping())
 
     # Instantiate DatabaseManager and seed initial data
     db_manager = DatabaseManager("automail.db")
