@@ -177,7 +177,7 @@ def test_send_http_relay_resend_success(mock_post):
     )
 
     assert success is True
-    assert "OK (Resend API)" in msg
+    assert "OK (Resend API HTTPS)" in msg
     mock_post.assert_called_once()
 
 

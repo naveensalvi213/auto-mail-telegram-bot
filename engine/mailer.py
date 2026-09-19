@@ -69,6 +69,7 @@ def send_http_relay_email(
 
     elif resend_key:
         try:
+            from_name = sender_email.split("@")[0] if "@" in sender_email else "Outreach"
             resp = requests.post(
                 "https://api.resend.com/emails",
                 headers={
@@ -76,17 +77,18 @@ def send_http_relay_email(
                     "Content-Type": "application/json"
                 },
                 json={
-                    "from": sender_email,
+                    "from": f"{from_name} <onboarding@resend.dev>",
                     "to": [recipient_email],
+                    "reply_to": sender_email,
                     "subject": subject,
                     "text": body
                 },
                 timeout=15
             )
             if resp.status_code in (200, 201, 202):
-                return True, "OK (Resend API)"
+                return True, "OK (Resend API HTTPS)"
             else:
-                return False, f"Resend API failed ({resp.status_code}): {resp.text}"
+                return False, f"Resend API ({resp.status_code}): {resp.text}"
         except Exception as e:
             return False, f"Resend API error: {e}"
 
