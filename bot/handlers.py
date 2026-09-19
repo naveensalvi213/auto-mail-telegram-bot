@@ -44,23 +44,21 @@ def set_db_manager(db_mgr: DatabaseManager) -> None:
 
 def is_authorized_chat(update: Any) -> bool:
     """
-    Ensures lead uploads and campaign management occur in group -5536170059, private chat, or authorized admin.
+    Returns True for any group, supergroup, private chat, channel, or chat where the bot is present.
     """
     if not update:
         return False
 
     chat = getattr(update, "effective_chat", None)
     if chat:
-        chat_id_str = str(chat.id)
+        chat_id_str = str(chat.id) if getattr(chat, "id", None) is not None else ""
         chat_type = getattr(chat, "type", "unknown")
         logger.info(f"Incoming update from chat_id: {chat_id_str} (Type: {chat_type})")
-        if chat_id_str == TARGET_GROUP_ID or chat_id_str.endswith("5536170059") or chat_type == "private":
-            return True
-        if getattr(chat, "is_admin", False):
+        if chat_type in ["group", "supergroup", "private", "channel", "unknown"] or chat_id_str:
             return True
 
     user = getattr(update, "effective_user", None)
-    if user and getattr(user, "is_admin", False):
+    if user:
         return True
 
     return False
@@ -86,25 +84,25 @@ async def start_help_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "• `/pause` - Pause active campaign.\n"
         "• `/resume` - Resume paused campaign.\n"
         "• `/cancel` - Cancel active campaign.\n\n"
-        "🔒 *Note:* Lead uploads and campaign operations are restricted to Group `-5536170059`."
+        "🔒 *Note:* Lead uploads and campaign operations are enabled for all chats and groups."
     )
     await update.message.reply_text(welcome_text, parse_mode="Markdown")
 
 
 async def id_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Command /id or /groupid: Respond with chat/group ID and target group match status."""
+    """Command /id or /groupid: Respond with chat/group ID cleanly."""
     if not update.effective_chat:
         return
     chat_id = str(update.effective_chat.id)
-    chat_title = getattr(update.effective_chat, "title", "Private Chat")
-    matches = chat_id == TARGET_GROUP_ID
-    status = "YES ✅ (Authorized)" if matches else f"NO ❌ (Target: `{TARGET_GROUP_ID}`)"
+    chat_title = getattr(update.effective_chat, "title", None) or "Private Chat"
+    chat_type = getattr(update.effective_chat, "type", "unknown")
 
     reply_text = (
         f"🆔 **Chat / Group Information**\n\n"
         f"• **Title:** {chat_title}\n"
         f"• **Chat ID:** `{chat_id}`\n"
-        f"• **Target Group Match:** {status}"
+        f"• **Type:** `{chat_type}`\n"
+        f"• **Status:** YES ✅ (Authorized)"
     )
     await update.message.reply_text(reply_text, parse_mode="Markdown")
 
@@ -116,7 +114,7 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     stores parsed leads in temporary active context, replies with summary & Mail Set inline keyboard.
     """
     if not is_authorized_chat(update):
-        await update.message.reply_text("⚠️ Unauthorized chat! Lead file uploads are restricted to target group `-5536170059`.", parse_mode="Markdown")
+        await update.message.reply_text("⚠️ Unauthorized chat or invalid update.", parse_mode="Markdown")
         return
 
     doc = update.message.document

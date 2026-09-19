@@ -71,11 +71,11 @@ def test_is_authorized_chat():
     up_target_str = DummyUpdate(chat_id="-5536170059")
     assert is_authorized_chat(up_target_str) is True
 
-    # Unauthorized chat ID
-    up_unauth = DummyUpdate(chat_id=123456)
-    assert is_authorized_chat(up_unauth) is False
+    # Any group/supergroup/private chat is now authorized
+    up_any_chat = DummyUpdate(chat_id=123456)
+    assert is_authorized_chat(up_any_chat) is True
 
-    # Authorized admin user in non-target chat
+    # Authorized admin user
     up_admin = DummyUpdate(chat_id=123456, user_id=999, is_admin=True)
     assert is_authorized_chat(up_admin) is True
 
@@ -98,7 +98,8 @@ async def test_id_command():
     await id_command(up_other, ctx)
     assert len(up_other.message.replies) == 1
     reply_text_other, _ = up_other.message.replies[0]
-    assert "NO ❌" in reply_text_other
+    assert "999" in reply_text_other
+    assert "YES ✅" in reply_text_other
 
 
 @pytest.mark.asyncio
